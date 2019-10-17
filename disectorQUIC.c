@@ -52,6 +52,7 @@ int main(int argc, char **argv)
 	char errbuf[PCAP_ERRBUF_SIZE];
 	
 	int flag_e = 0;
+	int flag_n = 0;
 	int long_index = 0, retorno = 0;
 	char opt;
 	
@@ -77,12 +78,13 @@ int main(int argc, char **argv)
 		{"f", required_argument, 0, 'f'},
 		{"i",required_argument, 0,'i'},
 		{"e", required_argument, 0, 'e'},
-		{"v",required_argument,0,'v'},
+		{"n",required_argument,0,'n'},
+		{"p",required_argument,0,'p'},
 		{"h", no_argument, 0, 'h'},
 		{0, 0, 0, 0}
 	};
 
-	while ((opt = getopt_long_only(argc, argv, "f:i:e:v:h", options, &long_index)) != -1) {
+	while ((opt = getopt_long_only(argc, argv, "f:i:e:n:p:h", options, &long_index)) != -1) {
 		switch (opt) {
 		case 'i' :
 			if(descr) { // comprobamos que no se ha abierto ninguna otra interfaz o fichero
@@ -117,19 +119,37 @@ int main(int argc, char **argv)
 			break;
 
 		case 'h' :
-			printf("Ayuda. Ejecucion: %s <-f traza.pcap / -i eth0> [-e ''filter_exp''] [-v num_sesiones num_pkts_delete quic port]\n", argv[0]);
+			printf("Ayuda. Ejecucion: %s <-f traza.pcap / -i eth0> [-e ''filter_exp''] [-n num_pkts_delete] [-p quic port]\n", argv[0]);
 			exit(ERROR);
 			break;
 
-		case 'v' :
+		case 'n' :
 			if(flag_e == 0){
 				printf("Please enter a filter before variables:\n");
-				printf("Ayuda. Ejecucion: %s <-f traza.pcap / -i eth0> [-e ''filter_exp''] [-v num_sesiones num_pkts_delete quic port]\n", argv[0]);
+				printf("Ayuda. Ejecucion: %s <-f traza.pcap / -i eth0> [-e ''filter_exp''] [-n num_pkts_delete] [-p quic port]\n", argv[0]);
 				exit(ERROR);
 			}
 			//printf("Variables introducidas: num pkts delete= %s, quic port= %s\n",argv[6],argv[7]);
 			numpktout = atoi(argv[6]);
-			quic_port = atoi(argv[7]);
+			flag_n = 1;
+
+			//printf("Num pkt %d\n",numpktout );
+			//printf("flag_n %d\n",flag_n );
+			//printf("quic port %d\n",quic_port );
+			break;
+
+		case 'p' :
+			if(flag_e == 0){
+				printf("Please enter a filter before variables:\n");
+				printf("Ayuda. Ejecucion: %s <-f traza.pcap / -i eth0> [-e ''filter_exp''] [-n num_pkts_delete] [-p quic port]\n", argv[0]);
+				exit(ERROR);
+			}
+			//printf("Variables introducidas: num pkts delete= %s, quic port= %s\n",argv[6],argv[7]);
+			if(flag_n == 0)
+				quic_port = atoi(argv[6]);
+			else
+				quic_port = atoi(argv[8]);
+
 
 			//printf("Num pkt %d\n",numpktout );
 			//printf("quic port %d\n",quic_port );
@@ -190,7 +210,7 @@ int main(int argc, char **argv)
 	printf("25stoc_first_pkn;26stoc_pkn_max;27stoc_pkn_total;28stoc_void;");
 	printf("29time_first_chlo;30time_first_rej;31time_first_ack;32time_first_nack;");
 	printf("33count_chlo;34count_rej;35count_ack;36count_nack;37version;38time_connection_close;39irtt;");
-	printf("40rtt_burst;41total_throughput;42quic_throughput;43loss;44rttcalculated;45uaid;46aead\n");
+	printf("40rtt_burst;41total_throughput;42quic_throughput;43ctos_loss;44stoc_loss;45rttcalculated;46uaid;47aead\n");
 
 
 	retorno=pcap_loop(descr,NO_LIMIT,analizar_paquete,NULL);
@@ -242,6 +262,7 @@ void analizar_paquete(u_char *user,const struct pcap_pkthdr *hdr, const uint8_t 
 	int tag_ack = 0;
 	int tag_nack = 0;
 	int tag_cc = 0;
+	int flag_reserved = 0;
 
 	// Variables para guardar longitud de paquete
 	u_int ip_size = 0;
@@ -482,345 +503,350 @@ void analizar_paquete(u_char *user,const struct pcap_pkthdr *hdr, const uint8_t 
 
 				quic_len = udp_len - udp_header_len;
 
-				if((quic->quic_flags&QUIC_CONNECTION_ID) != 0){ // Si esta activado el flag de CID lo imprimimos
-					
-					////printf("CID= "); // Ojo hay que pasarlo a numero
-					flag_cid = 1;
-					cid = be64toh(* (uint64_t *) pack);
-					////printf("%lu\n",cid);
-					pack += QUIC_CID;
-					quic_header_len += QUIC_CID;					
+				// Si flag reserved es 1 , no se analiza el paquete por que no esta previsto que RESERVED sea distinto de 0
+				if((quic->quic_flags&QUIC_RESERVED) != 0){
+					flag_reserved = 1;
 				}
-
-				if((quic->quic_flags&QUIC_VERSION) != 0){
-					
-					////printf("Version[hex]= ");
-					version = ((uint64_t)(pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3]));
-
-					////printf("%lX", version);
-
-					if(version == 0x51303433){
-						version = 43;
-						////printf(" -> Q043");
-					}
-					else{
-						version = -1;
-						////printf("\nATENCION: VERSION DISTINTA DE Q043");
-					}
-				
-					////printf("\n");
-					pack += QUIC_VERSION_LEN;
-					quic_header_len += QUIC_VERSION_LEN;
-				}
-					
-				if(((quic->quic_flags&QUIC_NONCE) != 0) && (flag_cid == 0)){
-				
-					//printf("Este paquete contiene NONCE HASH\n");
-					pack += QUIC_NONCE_LEN;
-					quic_header_len += QUIC_NONCE_LEN;
-				}
-				
-				if((quic->quic_flags&QUIC_PKN_SIZE) == 0x00){
-					////printf("PKN num = 00b\n");
-					//printf("PKN= ");
-					pkn = (int)pack[0];
-					//printf("%02X",pkn); // Default size 00c-> 8bits -> 1 byte
-					//printf("\n");
-					pack += QUIC_PKN_SIZE_1;
-					quic_header_len += QUIC_PKN_SIZE_1;
-					pkn_max = 255;
-				}	
-					
-				else if((quic->quic_flags&QUIC_PKN_SIZE) == 0x10){
-					////printf("PKN num = 01b\n");
-					//printf("PKN 16= ");
-					pkn = (int)(pack[0]<<8 | pack[1]);
-					//printf("%d",pkn);
-					//printf("\n");
-					pack += QUIC_PKN_SIZE_2;
-					quic_header_len += QUIC_PKN_SIZE_2;
-					pkn_max = 65535;
-				}
-					
-				else if((quic->quic_flags&QUIC_PKN_SIZE) == 0x20){
-					////printf("PKN num = 10b\n");
-					//printf("PKN 32= ");
-					pkn = (int)(pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3]);
-					//printf("%d",pkn);
-					//printf("\n");
-					pack += QUIC_PKN_SIZE_4;
-					quic_header_len += QUIC_PKN_SIZE_4;
-					pkn_max = INT_MAX;		// Si se ven pkn tan grande habra que cambiar de int a double
-				}
-					
-				else if((quic->quic_flags&QUIC_PKN_SIZE) == 0x30){
-					pkn = be64toh(* (uint64_t *) pack);
-					//printf("\n");
-					pack += QUIC_PKN_SIZE_6;
-					quic_header_len += QUIC_PKN_SIZE_6;
-					pkn_max = INT_MAX; //281474976710655;
-				}
-
-					pack += QUIC_MESSAGE_AUTENTICATION_HASH; // asumo que hay message aut hash para ver si es cierto.
-
-					if((pack[0] == 0x40) && (flag_cid == 1) && (ip_len > 1300) ){ // si habia cid y tiene 0x40 es ack
-						tag_ack = 1;
-						quic_header_len += QUIC_MESSAGE_AUTENTICATION_HASH;
-
-						pack += QUIC_ACK_LEN;
-						quic_header_len += QUIC_ACK_LEN;
-
-						if(pack[0] == 0x06){	// Stop waiting
-							pack += QUIC_ACK_LEN_STOP_WAITING;
-							quic_header_len += QUIC_ACK_LEN_STOP_WAITING;
-						}
-						//printf("%02X ",pack[0]);
-					}
-					else if((pack[0] == 0x20) && (flag_cid == 1) && (ip_len > 1300) ){ // si habia cid y tiene 0x40 es nack
-
-						//printf("Es NACK");
-						tag_nack = 1;
-						quic_header_len += QUIC_MESSAGE_AUTENTICATION_HASH;
-
-						pack += QUIC_NACK_LEN; // Salto todos los campos de nack
-						quic_header_len += QUIC_NACK_LEN;
-						//printf("%02X ",pack[0]);
-					}
-
-					//detectar CC. Primero detectar ACK (en caso de CC no tienen pq ser > 1300) y luego CC
-					if((pack[0] == 0x40) && (flag_cid == 1) ){ // si habia cid y tiene 0x40 es ack
-
-						quic_header_len += QUIC_MESSAGE_AUTENTICATION_HASH;
-
-						// Aqui se puede ver el server connection close
-
-						pack += QUIC_ACK_LEN; // Salto todos los campos de ack
-						quic_header_len += QUIC_ACK_LEN;
-
-						// Deteccion de Connection close
-						//printf("<%02x %02x> ",pack[0],pack[1] );
-						if((pack[0] == 0x02)){
-							tag_cc = 1;
-							quic_header_len += QUIC_CC_LEN;
-
-						}
-						pack -= QUIC_ACK_LEN;
-					}
-					
-					if(((pack[0]&QUIC_STREAM ) == 0x80) && (flag_cid == 1)){
-
-						//printf("Es paquete STREAM SPECIAL FRAME TYPE\n");
-						//printf("%02X\n",(pack[0]&QUIC_STREAM) );
+				else{
+					if((quic->quic_flags&QUIC_CONNECTION_ID) != 0){ // Si esta activado el flag de CID lo imprimimos
 						
-						// Hay que comprobar el frame type
+						////printf("CID= "); // Ojo hay que pasarlo a numero
+						flag_cid = 1;
+						cid = be64toh(* (uint64_t *) pack);
+						////printf("%lu\n",cid);
+						pack += QUIC_CID;
+						quic_header_len += QUIC_CID;					
+					}
+
+					if((quic->quic_flags&QUIC_VERSION) != 0){
 						
-						if((pack[0]&QUIC_OFFSET) == 0x04){ // hay mas casos
+						////printf("Version[hex]= ");
+						version = ((uint64_t)(pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3]));
 
-							//printf("Tiene offset\n");
-							flag_offset = 1;
-						}
+						////printf("%lX", version);
 
-						if((pack[0]&QUIC_FLAG_DATA_LEN) == 0x20){
-
-							//printf("Tiene data length\n");
-							flag_data_len = 1;
-						}
-						if(flag_offset == 1){
-
-							pack += QUIC_OFFSET_LEN;
-							quic_header_len += QUIC_OFFSET_LEN;
-
-						}
-
-						pack += QUIC_FRAME_TYPE_LEN;
-						quic_header_len += QUIC_FRAME_TYPE_LEN;
-	
-						pack += QUIC_STREAM_ID_LEN;
-						quic_header_len += QUIC_STREAM_ID_LEN;
-
-						if(flag_data_len == 1){
-							//quic_len = (int)(pack[0]<<8 | pack[1]);
-							////printf("Data length= %u\n",quic_len);
-							//printf("Data length= %u\n",(int)(pack[0]<<8 | pack[1]));
-							pack += QUIC_DATA_LEN;
-							quic_header_len += QUIC_DATA_LEN;
-						}
-
-						uint64_t special_frame_tag = ((uint64_t)(pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3]));
-						//printf("TAG[hex]= %lX\n", special_frame_tag);
-
-						if(special_frame_tag == 0x43484c4f){
-							tag_chlo = 1;
-							//printf("Es CHLO:\n");
-							quic_header_len = quic_len;	// No hay payload
-						}
-						else if(special_frame_tag == 0x52454a00){
-							tag_rejection = 1;
-							//printf("Es REJECTION\n");
-							quic_header_len = quic_len;	// No hay payload
-
+						if(version == 0x51303433){
+							version = 43;
+							////printf(" -> Q043");
 						}
 						else{
-							tag_other = 1;
-							//printf("No es CHLO ni REJECTION!!\n");
+							version = -1;
+							////printf("\nATENCION: VERSION DISTINTA DE Q043");
 						}
-
-						pack += QUIC_TAG_LEN;
-
-						//printf("avanzar hex %02X\n",pack[0] );
-						//printf("%02X\n",pack[1] );
-
-						int tag = ntohs((int)(pack[0] << 8 | pack[1]));
-						//printf("tag %d \n",tag );
-
-						int avanzar = tag;	// hay #tag campos que avanzar, cada campo vale 8 bytes
-						//printf("avanzar %d\n",avanzar );
-
-						pack += QUIC_TAG_NUMBER_LEN + QUIC_PADDING_LEN;
-
-						if(tag_rejection == 1){
-
-							pack += avanzar*8;
-
-						}
-						else if(tag_chlo == 1){
-
-							// Campo PAD
-							pack += QUIC_TAG_PAD/2;
-							uint64_t PAD_length = ((uint64_t)(ntohs(pack[0] << 8 | pack[1])&0x03ff));
-							//printf("PAD length= %lu\n", PAD_length);
-							//printf("PAD length[hex]= %lX\n", PAD_length);
-							pack += QUIC_TAG_PAD/2;
-
-							// Aqui empieza el campo SNI -> Mirar hostname
-
-							// SNI sumar length para llegar a hostname
-							//printf("SNI[hex]= ");
-							//uint64_t sni = 0;
-							pack += QUIC_TAG_SNI/2;
-
-							uint64_t SNI_length = ((uint64_t)(ntohs(pack[0] << 8 | pack[1])&0x03ff));
-							Offset_final = SNI_length;
-							
-							pack += QUIC_TAG_SNI/2;
-
-							uint64_t tag_sni_len = SNI_length - PAD_length;
-
-							if(SNI_length < PAD_length){
-								tag_sni_len = 1; // evitar seg faut
-								//printf("ERROR EN tag_sni_len\n");
-							}
-
-							for(j = 0;j< avanzar - 2; j++){
-
-								Offset_inicio = Offset_final;
-								Offset_final = ((uint64_t)(ntohs(pack[4] << 8 | pack[5])&0x03ff));
-
-								//UAID
-								if((pack[0] == 0x55) && (pack[1] == 0x41) && (pack[2] == 0x49) && (pack[3] == 0x44)){
-
-									//printf("Entra a uaid\n");
-									UAID_inicio = Offset_inicio;
-									UAID_final = Offset_final;
-									flag_uaid = 1;
-									//printf("UAID_inicio %ld\n",UAID_inicio );
-									//printf("UAID_final %ld\n",UAID_final );
-								}
-								//AEAD
-								else if((pack[0] == 0x41) && (pack[1] == 0x45) && (pack[2] == 0x41) && (pack[3] == 0x44)){
-
-									//printf("Entra a aead\n");
-									AEAD_inicio = Offset_inicio;
-									AEAD_final = Offset_final;
-									flag_aead = 1;
-									//printf("AEAD_inicio %ld\n",AEAD_inicio );
-									//printf("AEAD_final %ld\n",AEAD_final );
-								}
-								//IRTT
-								else if((pack[0] == 0x49) && (pack[1] == 0x52) && (pack[2] == 0x54) && (pack[3] == 0x54)){
-
-									//printf("Entra a IRTT\n");
-									IRTT_inicio = Offset_inicio;
-									//IRTT_final = Offset_final;
-									flag_irtt = 1;
-									//printf("IRTT_inicio %ld\n",IRTT_inicio );
-									//printf("IRTT_final %ld\n",IRTT_final );
-								}
-								//ICSL
-								else if((pack[0] == 0x49) && (pack[1] == 0x43) && (pack[2] == 0x53) && (pack[3] == 0x4c)){
-
-									//printf("Entra a ICSL\n");
-									ICSL_inicio = Offset_inicio;
-									//ICSL_final = Offset_final;
-									flag_icsl = 1;
-									//printf("ICSL_inicio %ld\n",ICSL_inicio );
-									//printf("ICSL_final %ld\n",ICSL_final );
-								}
-
-
-								pack += 8;
-							}
-							pack += PAD_length;
-							//printf("SNI length %d\n",SNI_length );
-							//printf("PAD length %d\n",PAD_length );
-
-							// captura del hostname
-							for(i = 0; i<tag_sni_len; i++){
-								hostname[i] = pack[i];
-							}
-
-							pack += tag_sni_len;
-
-							// captura deñ uaid
-							if(flag_uaid == 1){
-								pack += UAID_inicio - SNI_length;
-								avanzar_uaid = UAID_final - UAID_inicio;
-								//printf("%ld\n",avanzar_uaid );
-								for(i = 0; i<avanzar_uaid; i++){
-									uaid[i] = pack[i];
-									//printf("%c",pack[i] );
-								}
-								pack -= UAID_inicio - SNI_length;
-							}
-
-							// captura del aead y el irtt
-							if(flag_aead == 1){
-								pack += AEAD_inicio - SNI_length;
-								avanzar_aead = AEAD_final - AEAD_inicio;
-								for(i = 0; i<avanzar_aead; i++){
-									aead[i] = pack[i];
-									//printf("%c",pack[i] );
-								}
-								pack -= AEAD_inicio - SNI_length;
-							}
-
-							if(flag_irtt == 1){
-								pack += IRTT_inicio - SNI_length;
-								irtt = (uint64_t)(pack[3] << 24 | pack[2] << 16 | pack[1] << 8 | pack[0]);
-								pack -= IRTT_inicio - SNI_length;
-							}
-
-							if(flag_icsl == 1){
-								pack += ICSL_inicio - SNI_length;
-								idle_connection_state = (int)(pack[3] << 24 | pack[2] << 16 | pack[1] << 8 | pack[0]);
-								pack -= ICSL_inicio - SNI_length;
-							}
-						}
-
+					
+						////printf("\n");
+						pack += QUIC_VERSION_LEN;
+						quic_header_len += QUIC_VERSION_LEN;
+					}
+						
+					if(((quic->quic_flags&QUIC_NONCE) != 0) && (flag_cid == 0)){
+					
+						//printf("Este paquete contiene NONCE HASH\n");
+						pack += QUIC_NONCE_LEN;
+						quic_header_len += QUIC_NONCE_LEN;
+					}
+					
+					if((quic->quic_flags&QUIC_PKN_SIZE) == 0x00){
+						////printf("PKN num = 00b\n");
+						//printf("PKN= ");
+						pkn = (int)pack[0];
+						//printf("%02X",pkn); // Default size 00c-> 8bits -> 1 byte
+						//printf("\n");
+						pack += QUIC_PKN_SIZE_1;
+						quic_header_len += QUIC_PKN_SIZE_1;
+						pkn_max = 255;
+					}	
+						
+					else if((quic->quic_flags&QUIC_PKN_SIZE) == 0x10){
+						////printf("PKN num = 01b\n");
+						//printf("PKN 16= ");
+						pkn = (int)(pack[0]<<8 | pack[1]);
+						//printf("%d",pkn);
+						//printf("\n");
+						pack += QUIC_PKN_SIZE_2;
+						quic_header_len += QUIC_PKN_SIZE_2;
+						pkn_max = 65535;
+					}
+						
+					else if((quic->quic_flags&QUIC_PKN_SIZE) == 0x20){
+						////printf("PKN num = 10b\n");
+						//printf("PKN 32= ");
+						pkn = (int)(pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3]);
+						//printf("%d",pkn);
+						//printf("\n");
+						pack += QUIC_PKN_SIZE_4;
+						quic_header_len += QUIC_PKN_SIZE_4;
+						pkn_max = INT_MAX;		// Si se ven pkn tan grande habra que cambiar de int a double
+					}
+						
+					else if((quic->quic_flags&QUIC_PKN_SIZE) == 0x30){
+						pkn = be64toh(* (uint64_t *) pack);
+						//printf("\n");
+						pack += QUIC_PKN_SIZE_6;
+						quic_header_len += QUIC_PKN_SIZE_6;
+						pkn_max = INT_MAX; //281474976710655;
 					}
 
-				key =  src_addr[0]*1000+ src_addr[1];
-				key +=  src_addr[2]*1000+ src_addr[3];
+						pack += QUIC_MESSAGE_AUTENTICATION_HASH; // asumo que hay message aut hash para ver si es cierto.
 
-				key +=  dst_addr[0]*1000+ dst_addr[1];
-				key +=  dst_addr[2]*1000+ dst_addr[3];
+						if((pack[0] == 0x40) && (flag_cid == 1) && (ip_len > 1300) ){ // si habia cid y tiene 0x40 es ack
+							tag_ack = 1;
+							quic_header_len += QUIC_MESSAGE_AUTENTICATION_HASH;
 
-				key +=  src_port +  dst_port;
-				//printf("Key: %d\n",key);
+							pack += QUIC_ACK_LEN;
+							quic_header_len += QUIC_ACK_LEN;
 
-				//printf("\n%ld.",contador );
-				insert(key,hostname,src_addr,dst_addr,src_port,dst_port,cid,pkn,pkn_max,time,ip_len,ip_header_len,udp_len,udp_header_len,quic_len,quic_header_len,tag_chlo,tag_rejection,tag_other,tag_ack,tag_nack,tag_cc,version,irtt,uaid,aead,idle_connection_state);
+							if(pack[0] == 0x06){	// Stop waiting
+								pack += QUIC_ACK_LEN_STOP_WAITING;
+								quic_header_len += QUIC_ACK_LEN_STOP_WAITING;
+							}
+							//printf("%02X ",pack[0]);
+						}
+						else if((pack[0] == 0x20) && (flag_cid == 1) && (ip_len > 1300) ){ // si habia cid y tiene 0x40 es nack
 
+							//printf("Es NACK");
+							tag_nack = 1;
+							quic_header_len += QUIC_MESSAGE_AUTENTICATION_HASH;
+
+							pack += QUIC_NACK_LEN; // Salto todos los campos de nack
+							quic_header_len += QUIC_NACK_LEN;
+							//printf("%02X ",pack[0]);
+						}
+
+						//detectar CC. Primero detectar ACK (en caso de CC no tienen pq ser > 1300) y luego CC
+						if((pack[0] == 0x40) && (flag_cid == 1) ){ // si habia cid y tiene 0x40 es ack
+
+							quic_header_len += QUIC_MESSAGE_AUTENTICATION_HASH;
+
+							// Aqui se puede ver el server connection close
+
+							pack += QUIC_ACK_LEN; // Salto todos los campos de ack
+							quic_header_len += QUIC_ACK_LEN;
+
+							// Deteccion de Connection close
+							//printf("<%02x %02x> ",pack[0],pack[1] );
+							if((pack[0] == 0x02)){
+								tag_cc = 1;
+								quic_header_len += QUIC_CC_LEN;
+
+							}
+							pack -= QUIC_ACK_LEN;
+						}
+						
+						if(((pack[0]&QUIC_STREAM ) == 0x80) && (flag_cid == 1)){
+
+							//printf("Es paquete STREAM SPECIAL FRAME TYPE\n");
+							//printf("%02X\n",(pack[0]&QUIC_STREAM) );
+							
+							// Hay que comprobar el frame type
+							
+							if((pack[0]&QUIC_OFFSET) == 0x04){ // hay mas casos
+
+								//printf("Tiene offset\n");
+								flag_offset = 1;
+							}
+
+							if((pack[0]&QUIC_FLAG_DATA_LEN) == 0x20){
+
+								//printf("Tiene data length\n");
+								flag_data_len = 1;
+							}
+							if(flag_offset == 1){
+
+								pack += QUIC_OFFSET_LEN;
+								quic_header_len += QUIC_OFFSET_LEN;
+
+							}
+
+							pack += QUIC_FRAME_TYPE_LEN;
+							quic_header_len += QUIC_FRAME_TYPE_LEN;
+		
+							pack += QUIC_STREAM_ID_LEN;
+							quic_header_len += QUIC_STREAM_ID_LEN;
+
+							if(flag_data_len == 1){
+								//quic_len = (int)(pack[0]<<8 | pack[1]);
+								////printf("Data length= %u\n",quic_len);
+								//printf("Data length= %u\n",(int)(pack[0]<<8 | pack[1]));
+								pack += QUIC_DATA_LEN;
+								quic_header_len += QUIC_DATA_LEN;
+							}
+
+							uint64_t special_frame_tag = ((uint64_t)(pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3]));
+							//printf("TAG[hex]= %lX\n", special_frame_tag);
+
+							if(special_frame_tag == 0x43484c4f){
+								tag_chlo = 1;
+								//printf("Es CHLO:\n");
+								quic_header_len = quic_len;	// No hay payload
+							}
+							else if(special_frame_tag == 0x52454a00){
+								tag_rejection = 1;
+								//printf("Es REJECTION\n");
+								quic_header_len = quic_len;	// No hay payload
+
+							}
+							else{
+								tag_other = 1;
+								//printf("No es CHLO ni REJECTION!!\n");
+							}
+
+							pack += QUIC_TAG_LEN;
+
+							//printf("avanzar hex %02X\n",pack[0] );
+							//printf("%02X\n",pack[1] );
+
+							int tag = ntohs((int)(pack[0] << 8 | pack[1]));
+							//printf("tag %d \n",tag );
+
+							int avanzar = tag;	// hay #tag campos que avanzar, cada campo vale 8 bytes
+							//printf("avanzar %d\n",avanzar );
+
+							pack += QUIC_TAG_NUMBER_LEN + QUIC_PADDING_LEN;
+
+							if(tag_rejection == 1){
+
+								pack += avanzar*8;
+
+							}
+							else if(tag_chlo == 1){
+
+								// Campo PAD
+								pack += QUIC_TAG_PAD/2;
+								uint64_t PAD_length = ((uint64_t)(ntohs(pack[0] << 8 | pack[1])&0x03ff));
+								//printf("PAD length= %lu\n", PAD_length);
+								//printf("PAD length[hex]= %lX\n", PAD_length);
+								pack += QUIC_TAG_PAD/2;
+
+								// Aqui empieza el campo SNI -> Mirar hostname
+
+								// SNI sumar length para llegar a hostname
+								//printf("SNI[hex]= ");
+								//uint64_t sni = 0;
+								pack += QUIC_TAG_SNI/2;
+
+								uint64_t SNI_length = ((uint64_t)(ntohs(pack[0] << 8 | pack[1])&0x03ff));
+								Offset_final = SNI_length;
+								
+								pack += QUIC_TAG_SNI/2;
+
+								uint64_t tag_sni_len = SNI_length - PAD_length;
+
+								if(SNI_length < PAD_length){
+									tag_sni_len = 1; // evitar seg faut
+									//printf("ERROR EN tag_sni_len\n");
+								}
+
+								for(j = 0;j< avanzar - 2; j++){
+
+									Offset_inicio = Offset_final;
+									Offset_final = ((uint64_t)(ntohs(pack[4] << 8 | pack[5])&0x03ff));
+
+									//UAID
+									if((pack[0] == 0x55) && (pack[1] == 0x41) && (pack[2] == 0x49) && (pack[3] == 0x44)){
+
+										//printf("Entra a uaid\n");
+										UAID_inicio = Offset_inicio;
+										UAID_final = Offset_final;
+										flag_uaid = 1;
+										//printf("UAID_inicio %ld\n",UAID_inicio );
+										//printf("UAID_final %ld\n",UAID_final );
+									}
+									//AEAD
+									else if((pack[0] == 0x41) && (pack[1] == 0x45) && (pack[2] == 0x41) && (pack[3] == 0x44)){
+
+										//printf("Entra a aead\n");
+										AEAD_inicio = Offset_inicio;
+										AEAD_final = Offset_final;
+										flag_aead = 1;
+										//printf("AEAD_inicio %ld\n",AEAD_inicio );
+										//printf("AEAD_final %ld\n",AEAD_final );
+									}
+									//IRTT
+									else if((pack[0] == 0x49) && (pack[1] == 0x52) && (pack[2] == 0x54) && (pack[3] == 0x54)){
+
+										//printf("Entra a IRTT\n");
+										IRTT_inicio = Offset_inicio;
+										//IRTT_final = Offset_final;
+										flag_irtt = 1;
+										//printf("IRTT_inicio %ld\n",IRTT_inicio );
+										//printf("IRTT_final %ld\n",IRTT_final );
+									}
+									//ICSL
+									else if((pack[0] == 0x49) && (pack[1] == 0x43) && (pack[2] == 0x53) && (pack[3] == 0x4c)){
+
+										//printf("Entra a ICSL\n");
+										ICSL_inicio = Offset_inicio;
+										//ICSL_final = Offset_final;
+										flag_icsl = 1;
+										//printf("ICSL_inicio %ld\n",ICSL_inicio );
+										//printf("ICSL_final %ld\n",ICSL_final );
+									}
+
+
+									pack += 8;
+								}
+								pack += PAD_length;
+								//printf("SNI length %d\n",SNI_length );
+								//printf("PAD length %d\n",PAD_length );
+
+								// captura del hostname
+								for(i = 0; i<tag_sni_len; i++){
+									hostname[i] = pack[i];
+								}
+
+								pack += tag_sni_len;
+
+								// captura deñ uaid
+								if(flag_uaid == 1){
+									pack += UAID_inicio - SNI_length;
+									avanzar_uaid = UAID_final - UAID_inicio;
+									//printf("%ld\n",avanzar_uaid );
+									for(i = 0; i<avanzar_uaid; i++){
+										uaid[i] = pack[i];
+										//printf("%c",pack[i] );
+									}
+									pack -= UAID_inicio - SNI_length;
+								}
+
+								// captura del aead y el irtt
+								if(flag_aead == 1){
+									pack += AEAD_inicio - SNI_length;
+									avanzar_aead = AEAD_final - AEAD_inicio;
+									for(i = 0; i<avanzar_aead; i++){
+										aead[i] = pack[i];
+										//printf("%c",pack[i] );
+									}
+									pack -= AEAD_inicio - SNI_length;
+								}
+
+								if(flag_irtt == 1){
+									pack += IRTT_inicio - SNI_length;
+									irtt = (uint64_t)(pack[3] << 24 | pack[2] << 16 | pack[1] << 8 | pack[0]);
+									pack -= IRTT_inicio - SNI_length;
+								}
+
+								if(flag_icsl == 1){
+									pack += ICSL_inicio - SNI_length;
+									idle_connection_state = (int)(pack[3] << 24 | pack[2] << 16 | pack[1] << 8 | pack[0]);
+									pack -= ICSL_inicio - SNI_length;
+								}
+							}
+
+						}
+
+					key =  src_addr[0]*1000+ src_addr[1];
+					key +=  src_addr[2]*1000+ src_addr[3];
+
+					key +=  dst_addr[0]*1000+ dst_addr[1];
+					key +=  dst_addr[2]*1000+ dst_addr[3];
+
+					key +=  src_port +  dst_port;
+					//printf("Key: %d\n",key);
+
+					//printf("\n%ld.",contador );
+					insert(key,hostname,src_addr,dst_addr,src_port,dst_port,cid,pkn,pkn_max,time,ip_len,ip_header_len,udp_len,udp_header_len,quic_len,quic_header_len,tag_chlo,tag_rejection,tag_other,tag_ack,tag_nack,tag_cc,version,irtt,uaid,aead,idle_connection_state);
+				}//Cierre de If reserved
 				//printf("\n\n");		
 			} // cierre de cond quic
 		} // Cierre de cond udp

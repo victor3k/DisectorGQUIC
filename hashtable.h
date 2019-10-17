@@ -86,7 +86,8 @@ typedef struct Session {
 
   double total_throughput;
   double quic_throughput;
-  double pkt_loss;
+  double ctos_pkt_loss;
+  double stoc_pkt_loss;
   double rtt_calculated;
 
   struct Session* nextListSession;
@@ -194,7 +195,8 @@ int i;
 
       hashArray[i]->total_throughput = 0;
       hashArray[i]->quic_throughput = 0;
-      hashArray[i]->pkt_loss = 0;
+      hashArray[i]->ctos_pkt_loss = 0;
+      hashArray[i]->stoc_pkt_loss = 0;
       hashArray[i]->rtt_calculated = 0;
 
       // El puntero a la siguiente estructura no se cambia.
@@ -278,12 +280,13 @@ void load_mem(){
     item->stoc_time_burst_start = 0;
     item->stoc_time_burst_end_aux = 0;
     item->stoc_time_burst_end = 0;
-    hashArray[i]->rtt_burst = 0;
+    item->rtt_burst = -1;
 
-    hashArray[i]->total_throughput = 0;
-    hashArray[i]->quic_throughput = 0;
-    hashArray[i]->pkt_loss = 0;
-    hashArray[i]->rtt_calculated = 0;
+    item->total_throughput = 0;
+    item->quic_throughput = 0;
+    item->ctos_pkt_loss = 0;
+    item->stoc_pkt_loss = 0;
+    item->rtt_calculated = 0;
 
 		hashArray[i] = item;
 
@@ -480,7 +483,8 @@ void qos_measurements(struct Session* sesion){
   sesion->total_throughput = (sesion->ctos_ip_len_total + sesion->stoc_ip_len_total)/time;
   sesion->quic_throughput = (sesion->ctos_quic_header_len_total + sesion->stoc_quic_header_len_total)/time;
 
-  sesion->pkt_loss = (double)100*(sesion->ctos_void + sesion->stoc_void)/(sesion->ctos_pkn_total + sesion->stoc_pkn_total);
+  sesion->ctos_pkt_loss = (double)100*(sesion->ctos_void)/(sesion->ctos_pkn_total);
+  sesion->stoc_pkt_loss = (double)100*(sesion->stoc_void)/(sesion->stoc_pkn_total);
 
   if(sesion->time_first_rej != -1 && sesion->time_first_chlo != -1 && sesion->time_first_chlo < sesion->time_first_rej){
     sesion->rtt_calculated = sesion->time_first_rej - sesion->time_first_chlo;
@@ -798,7 +802,8 @@ void print_session(struct Session* aux){
 
         printf("%lf;",aux->total_throughput );
         printf("%lf;",aux->quic_throughput );
-        printf("%lf;",aux->pkt_loss );
+        printf("%lf;",aux->ctos_pkt_loss );
+        printf("%lf;",aux->stoc_pkt_loss );
         printf("%lf;",aux->rtt_calculated );
 
         printf("%s;",aux->uaid );
