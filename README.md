@@ -4,7 +4,7 @@ Compilar usando:
 gcc -o disector disectorQUIC.c -lpcap -O3
 
 Ejecutar usando:
-./disector -f -e -v
+./disector -f -e -n -p
 
 > Display ayuda:
 ./disector -h
@@ -21,4 +21,4 @@ Ejecutar usando:
 > Cambiar puerto QUIC o número de paquetes necesarios para lanzar rutina de borrado de sesiones caducadas. 
 Los valores predeterminados son 443 y 10000 respectivamente.
 Hay que usar previamente el filtro.
-./disector -f traza.pcap -e "udp" -v 444 10001
+./disector -f traza.pcap -e "udp" -n 10001 -p 444
