@@ -34,7 +34,7 @@
  la llamada a delete_past_session() y el puerto de captura QUIC.
  Esta funcion se encarga de limpiar la memoria de sesiones caducadas
 
- ./disector -f quic.pcap -e "udp" -v 30000 443
+ ./disector -f quic.pcap -e "udp" -n 30000 -p 443
 ***************************************************************************/
 
 #include "disector.h"
